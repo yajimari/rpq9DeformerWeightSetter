@@ -1,0 +1,1245 @@
+/*
+MIT License
+
+Copyright (c) 2025 Ryoya Yajima
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+//------------------------------------------------------------------------------
+// ScriptName : rpq9DeformerWeightSetter
+// Since      : 2025/5
+// Author     : Ryoya Yajima
+//------------------------------------------------------------------------------
+
+
+global proc int rpq9DeformerWeightSetter_checkTrackSelectionOrder()
+{
+    int $isTrackSelectionOrder = `selectPref -q -tso`;
+    if(!$isTrackSelectionOrder) warning "The track selection order is not active.";
+    return $isTrackSelectionOrder;
+}
+
+
+global proc rpq9DeformerWeightSetter_setWeight(string $components[], float $value)
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    if ($rpq9DeformerWeightSetter_currentDeformerName == "") error "No selected deformer.";
+
+    global string $rpq9DeformerWeightSetter_setWeightModeRadioButtonName;
+    int $setMode = `radioButtonGrp -q -sl $rpq9DeformerWeightSetter_setWeightModeRadioButtonName`;
+
+    if($rpq9DeformerWeightSetter_currentDeformerType == "skinCluster"){
+        global string $rpq9DeformerWeightSetter_influenceNameListName;
+        string $joints[] = `treeView -q -si $rpq9DeformerWeightSetter_influenceNameListName`;
+        if(`size($joints)` == 0) error "No selected influence.";
+        skinPercent -tv $joints[0] $value -r ($setMode-1) $rpq9DeformerWeightSetter_currentDeformerName $components;
+    }else{
+        if (($setMode-1) == 0){
+            percent -v $value $rpq9DeformerWeightSetter_currentDeformerName $components;
+        }else{
+            percent -v $value -ap $rpq9DeformerWeightSetter_currentDeformerName $components;
+        }
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_setWeightToSelected(float $value){
+    string $sel[] = `ls -os -fl`;
+    if(`size($sel)` == 0)  error "No selected.";
+    rpq9DeformerWeightSetter_setWeight($sel, $value);
+}
+
+
+global proc rpq9DeformerWeightSetter_copyComponentWeight(string $sourceComponent, string $targetComponents[])
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    if ($rpq9DeformerWeightSetter_currentDeformerName == "") error "No selected deformer.";
+
+    int $i=0;
+    if($rpq9DeformerWeightSetter_currentDeformerType == "skinCluster"){
+        string $influences[] = `skinPercent -q -transform $rpq9DeformerWeightSetter_currentDeformerName $sourceComponent`;
+        float $values[] = `skinPercent -q -v $rpq9DeformerWeightSetter_currentDeformerName $sourceComponent`;
+
+        string $commandBase = "skinPercent -nrm false -zri true ";
+        for($i=0; $i<size($influences); ++$i){
+            $commandBase += "-tv " + $influences[$i] + " " + $values[$i] + " ";
+        }
+        $commandBase += $rpq9DeformerWeightSetter_currentDeformerName + " ";
+        
+        for($i=0; $i<size($targetComponents); ++$i){
+            if(catchQuiet(eval ($commandBase + $targetComponents[$i]))){
+                warning ("skipped copy " + $targetComponents[$i]);
+            }
+        }
+    }else{
+        float $value = `percent -q -v $rpq9DeformerWeightSetter_currentDeformerName $sourceComponent`;
+        string $commandBase = "percent -v " + $value + " " + $rpq9DeformerWeightSetter_currentDeformerName + " ";
+        for($i=0; $i<size($targetComponents); ++$i){
+            if(catchQuiet(eval ($commandBase + $targetComponents[$i]))){
+                warning ("skipped copy " + $targetComponents[$i]);
+            }
+        }
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_copySelectedComponentWeight(){
+    rpq9DeformerWeightSetter_checkTrackSelectionOrder();
+    string $sel[] = `ls -os -fl`;
+    if(`size($sel)` < 2)  error "Worng number of selected.";
+    string $source = $sel[0];
+    stringArrayRemoveAtIndex(0, $sel);
+    rpq9DeformerWeightSetter_copyComponentWeight($source, $sel);
+}
+
+
+global proc rpq9DeformerWeightSetter_setAverageWeight(string $sourceComponents[], string $targetComponent)
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    if ($rpq9DeformerWeightSetter_currentDeformerName == "") error "No selected deformer.";
+
+    int $i=0;
+    int $j=0;
+    int $sourceComponentNum = size($sourceComponents);
+
+    if($rpq9DeformerWeightSetter_currentDeformerType == "skinCluster"){
+        string $influences[] = `skinPercent -q -transform $rpq9DeformerWeightSetter_currentDeformerName $targetComponent`;
+        int $influenceNum = size($influences);
+
+        float $influenceCache[] = {};
+        for($i=0; $i<$sourceComponentNum; ++$i){
+            float $values[] = `skinPercent -q -v $rpq9DeformerWeightSetter_currentDeformerName $sourceComponents[$i]`;
+            for($j=0; $j<$influenceNum; ++$j){
+                $influenceCache[$j] += $values[$j];
+            }
+        }
+
+        for($j=0; $j<$influenceNum; ++$j){
+                $influenceCache[$j] /= $sourceComponentNum;
+        }
+
+        string $commandBase = "skinPercent -nrm false -zri true ";
+        for($i=0; $i<$influenceNum; ++$i){
+            $commandBase += "-tv " + $influences[$i] + " " + $influenceCache[$i] + " ";
+        }
+        $commandBase += $rpq9DeformerWeightSetter_currentDeformerName + " ";
+
+        catchQuiet(eval ($commandBase + $targetComponent));
+    }else{
+        float $value = 0.0;
+        for($i=0; $i<$sourceComponentNum; ++$i){
+            $value += `percent -q -v $rpq9DeformerWeightSetter_currentDeformerName $sourceComponents[$i]`;
+        }
+
+        $value /= $sourceComponentNum;
+        percent -v $value $rpq9DeformerWeightSetter_currentDeformerName $targetComponent;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_setSelectedComponentAverageWeight(){
+    rpq9DeformerWeightSetter_checkTrackSelectionOrder();
+    string $sel[] = `ls -os -fl`;
+    int $selNum = `size($sel)`;
+    if($selNum < 2)  error "Worng number of selected.";
+    string $target = $sel[$selNum - 1];
+    stringArrayRemoveAtIndex($selNum - 1, $sel);
+    rpq9DeformerWeightSetter_setAverageWeight($sel, $target);
+}
+
+
+global proc string[] rpq9DeformerWeightSetter_getSelDeformers()
+{
+    string $sel[] = `ls -os`;
+    if (`size($sel)` == 0){
+        return {};
+    }
+    string $history[] = `listHistory $sel[0]`;
+    string $deformers[] = `ls -type "geometryFilter" $history `;
+    string $deformer;
+    string $resultDeformer[];
+    for ($deformer in $deformers){
+        if(`nodeType $deformer` != "tweak"){
+            $resultDeformer[`size($resultDeformer)`] = $deformer;
+        }
+    }
+    return $resultDeformer;
+}
+
+
+//--- ui creater
+proc string rpq9DeformerWeightSetter_createSetWeightButtons(float $buttonValues[])
+{
+    int $i = 0;
+    string $form = `formLayout`;
+    string $button;
+    string $buttonValueString = "";
+    int $buttonNum = `size($buttonValues)`;
+    for ($i=0; $i<$buttonNum; $i++){
+        $buttonValueString = `python ("str(float(" + $buttonValues[$i] + "))")`;
+        $button = `button -l $buttonValueString -c ("rpq9DeformerWeightSetter_setWeightToSelected(" + $buttonValueString + ")")`;
+        formLayout -e   -af $button "left" 0
+                        -af $button "right" 0
+                        $form;
+        if ($i==0){
+            formLayout -e   -af $button "top" 0
+                            -ap $button "bottom" 0 (100/$buttonNum)
+                            $form;
+        }else if ($i==$buttonNum-1){
+            formLayout -e   -ap $button "top" 0 ($i*100/$buttonNum)
+                            -af $button "bottom" 0
+                            $form;
+        }else{
+            formLayout -e   -ap $button "top" 0 ($i*100/$buttonNum)
+                            -ap $button "bottom" 0 (($i+1)*100/$buttonNum)
+                            $form;
+        }
+    }
+    setParent ..;
+    return $form;
+}
+
+
+global proc rpq9DeformerWeightSetter_setListLockIcon(string $item, int $lockValue)
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    treeView -e -buttonVisible $item 1 1 $rpq9DeformerWeightSetter_influenceNameListName;
+    string $icon = ($lockValue)? "Lock_ON.png" : "Lock_OFF_grey.png";
+    treeView -e -i $item 1 $icon $rpq9DeformerWeightSetter_influenceNameListName;
+}
+
+
+//--- ui updater
+global proc rpq9DeformerWeightSetter_updateSelectionDeformerList()
+{
+    int $i = 0;
+    global string $rpq9DeformerWeightSetter_deformerOptionName;
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+
+    int $currentListItemNum = `optionMenu -q -ni $rpq9DeformerWeightSetter_deformerOptionName`;
+    if($currentListItemNum == 0){
+        return;
+    }
+    string $currentDeformerListItems[] = `optionMenu -q -ill $rpq9DeformerWeightSetter_deformerOptionName`;
+    string $currentDeformerList[];
+    if(`size($currentDeformerListItems)`){
+        for($i=0; $i<`size($currentDeformerListItems)`; $i++){
+            $currentDeformerList[$i] = `menuItem -q -l $currentDeformerListItems[$i]`;
+        }
+    }
+
+    if (`stringArrayContains $rpq9DeformerWeightSetter_currentDeformerName $currentDeformerList`){
+        optionMenu -e -v $rpq9DeformerWeightSetter_currentDeformerName $rpq9DeformerWeightSetter_deformerOptionName;
+    }else{
+        string $currentDeformer = `optionMenu -q -v $rpq9DeformerWeightSetter_deformerOptionName`;
+        if ($currentDeformer != ""){
+            $rpq9DeformerWeightSetter_currentDeformerName = $currentDeformer;
+            $rpq9DeformerWeightSetter_currentDeformerType = `nodeType $currentDeformer`;
+        }
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_updateDeformerList()
+{
+    global string $rpq9DeformerWeightSetter_deformerOptionName;
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+
+    string $deformerNames[] = rpq9DeformerWeightSetter_getSelDeformers();
+
+    optionMenu -e -dai $rpq9DeformerWeightSetter_deformerOptionName;
+    if (`size($deformerNames)` != 0){
+        string $deformerName;
+        for ($deformerName in $deformerNames){
+            menuItem -l $deformerName -p $rpq9DeformerWeightSetter_deformerOptionName;
+        }
+    }
+    rpq9DeformerWeightSetter_updateSelectionDeformerList();
+}
+
+
+global proc rpq9DeformerWeightSetter_updateInfluenceNameListvisible()
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    global int $rpq9DeformerWeightSetter_isInfluenceNameListPin;
+    string $items[] = `treeView -q -children "" $rpq9DeformerWeightSetter_influenceNameListName`;
+    if($rpq9DeformerWeightSetter_isInfluenceNameListPin){
+        global string $rpq9DeformerWeightSetter_pinInfluenceNames[];
+        for( $item in $items ){
+            int $lVisible = false;
+
+            for( $pinItem in $rpq9DeformerWeightSetter_pinInfluenceNames){
+                if( $pinItem == $item ){
+                    $lVisible = true;
+                    break;
+                }
+            }
+            treeView -e -itemVisible $item $lVisible $rpq9DeformerWeightSetter_influenceNameListName;
+        }
+    }else{
+        for( $item in $items ){
+            treeView -e -itemVisible $item true $rpq9DeformerWeightSetter_influenceNameListName;
+        }
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_updateInfluenceList()
+{
+    global string $rpq9DeformerWeightSetter_deformerOptionName;
+    global string $rpq9DeformerWeightSetter_influenceNameListFillterName;
+    global string $rpq9DeformerWeightSetter_influenceNameListPinName;
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    global string $rpq9DeformerWeightSetter_influenceNameListSelNames[];
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+
+    treeView -e -ra $rpq9DeformerWeightSetter_influenceNameListName;
+
+    if (`optionMenu -q -ni $rpq9DeformerWeightSetter_deformerOptionName` == 0) return;
+
+    if ($rpq9DeformerWeightSetter_currentDeformerType == "skinCluster"){
+        string $influences[] = `skinCluster -q -inf $rpq9DeformerWeightSetter_currentDeformerName`;
+        string $influence;
+        for ($influence in $influences){
+            treeView -e -ai $influence "" $rpq9DeformerWeightSetter_influenceNameListName;
+            rpq9DeformerWeightSetter_setListLockIcon($influence, `getAttr($influence + ".liw")`);
+        }
+        filterUIHandleField $rpq9DeformerWeightSetter_influenceNameListName $rpq9DeformerWeightSetter_influenceNameListFillterName;
+
+        if (size($rpq9DeformerWeightSetter_influenceNameListSelNames) != 0){
+            string $c;
+            for ($c in $rpq9DeformerWeightSetter_influenceNameListSelNames){
+                if(`stringArrayContains $c $influences`){
+                    treeView -e -si $c 1 $rpq9DeformerWeightSetter_influenceNameListName;
+                }
+            }
+        }
+    }
+
+    if(`iconTextCheckBox -q -v $rpq9DeformerWeightSetter_influenceNameListPinName`){
+        rpq9DeformerWeightSetter_updateInfluenceNameListvisible();
+    }
+
+    rpq9DeformerWeightSetter_influenceListCC();
+}
+
+
+global proc rpq9DeformerWeightSetter_updateUi()
+{
+    rpq9DeformerWeightSetter_updateDeformerList();
+    rpq9DeformerWeightSetter_updateInfluenceList();
+}
+
+
+//---ui command
+global proc rpq9DeformerWeightSetter_influenceNameListLockCB(string $item, int $buttonState)
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    int $lockValue = 0;
+    if (`attributeQuery -n $item -ex liw`){
+        $lockValue = (`getAttr ( $item + ".liw" )`)? 0 : 1;
+        setAttr ($item + ".liw") $lockValue;
+    }
+    rpq9DeformerWeightSetter_setListLockIcon($item, $lockValue);
+
+    string $selections[] = `treeView -q -si $rpq9DeformerWeightSetter_influenceNameListName`;
+    if (stringArrayContains($item, $selections)){
+        for ($s in $selections){
+            if (`attributeQuery -n $s -ex liw`){
+                setAttr ($s + ".liw") $lockValue;
+            }
+            rpq9DeformerWeightSetter_setListLockIcon($s, $lockValue);
+        }
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_refleshInfluenceNameList(string $pinButton, string $treeView, string $fillterField, int $pPressed)
+{
+    global int $rpq9DeformerWeightSetter_isInfluenceNameListPin;
+    $rpq9DeformerWeightSetter_isInfluenceNameListPin = $pPressed;
+    rpq9DeformerWeightSetter_updateInfluenceNameListvisible();
+
+    if( $pPressed ){
+        textField -e -en false $fillterField;
+        iconTextCheckBox -e -image "pinned.png" $pinButton;
+    }else{
+        textField -e -en true $fillterField;
+        iconTextCheckBox -e -image "unpinned.png" $pinButton;
+        filterUIHandleField $treeView $fillterField;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_influenceNameListPinCallback(string $pinButton, string $treeView, string $fillterField, int $pPressed)
+{
+    global string $rpq9DeformerWeightSetter_pinInfluenceNames[];
+    
+    if( $pPressed ){
+        $rpq9DeformerWeightSetter_pinInfluenceNames = `treeView -q -si $treeView`;
+    }else{
+        $rpq9DeformerWeightSetter_pinInfluenceNames = {};
+    }
+    rpq9DeformerWeightSetter_refleshInfluenceNameList($pinButton, $treeView, $fillterField, $pPressed);
+}
+
+
+global proc rpq9DeformerWeightSetter_influenceNameListPinUnlockAll()
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListPinName;
+    global string $rpq9DeformerWeightSetter_influenceNameListFillterName;
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    global string $rpq9DeformerWeightSetter_pinInfluenceNames[];
+    $rpq9DeformerWeightSetter_pinInfluenceNames = {};
+    global int $rpq9DeformerWeightSetter_isInfluenceNameListPin;
+
+    string $items[] = `treeView -q -children "" $rpq9DeformerWeightSetter_influenceNameListName`;
+    string $item;
+    for($item in $items){
+        if(`getAttr ($item + ".liw")` == 0){
+            $rpq9DeformerWeightSetter_pinInfluenceNames[size($rpq9DeformerWeightSetter_pinInfluenceNames)] = $item;
+        }
+    }
+    $rpq9DeformerWeightSetter_isInfluenceNameListPin = true;
+    rpq9DeformerWeightSetter_updateInfluenceNameListvisible();
+
+    textField -e -en false $rpq9DeformerWeightSetter_influenceNameListFillterName;
+    iconTextCheckBox -e -image "pinned.png" -v true $rpq9DeformerWeightSetter_influenceNameListPinName;
+}
+
+
+global proc rpq9DeformerWeightSetter_applyInfluenceNameListCachePin(string $cacheName)
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListPinName;
+    global string $rpq9DeformerWeightSetter_influenceNameListFillterName;
+    global int $rpq9DeformerWeightSetter_isInfluenceNameListPin;
+    string $globalVaraiableName = "rpq9DeformerWeightSetter_influenceNameListCachePin_" + $cacheName;
+
+    string $cmd = "global string $" + $globalVaraiableName + "[]; global string $rpq9DeformerWeightSetter_pinInfluenceNames[]; $rpq9DeformerWeightSetter_pinInfluenceNames = $" + $globalVaraiableName + ";";
+    eval($cmd);
+    $rpq9DeformerWeightSetter_isInfluenceNameListPin = true;
+    rpq9DeformerWeightSetter_updateInfluenceNameListvisible();
+
+    textField -e -en false $rpq9DeformerWeightSetter_influenceNameListFillterName;
+    iconTextCheckBox -e -image "pinned.png" -v true $rpq9DeformerWeightSetter_influenceNameListPinName;
+}
+
+
+global proc rpq9DeformerWeightSetter_refleshInfluenceNameListPinMenu()
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListPinName;
+    global string $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    global string $rpq9DeformerWeightSetter_pinInfluenceCacheNames[];
+
+    popupMenu -e -dai $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    menuItem -l "Unlock All" -c "rpq9DeformerWeightSetter_influenceNameListPinUnlockAll" -p $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    menuItem -divider true -p $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    menuItem -l "Cache Pin" -c "rpq9DeformerWeightSetter_influenceNameListCachePin" -p $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    menuItem -l "Delete Cache Pin" -c "rpq9DeformerWeightSetter_influenceNameListDeleteCachePin" -p $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    menuItem -divider true -p $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    string $name = "";
+    for($name in $rpq9DeformerWeightSetter_pinInfluenceCacheNames){
+        menuItem -l $name -c ("rpq9DeformerWeightSetter_applyInfluenceNameListCachePin " + $name) -p $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_influenceNameListCachePin()
+{
+    global string $rpq9DeformerWeightSetter_pinInfluenceNames[];
+    global string $rpq9DeformerWeightSetter_pinInfluenceCacheNames[];
+    global int $rpq9DeformerWeightSetter_isInfluenceNameListPin;
+
+    if (`size($rpq9DeformerWeightSetter_pinInfluenceNames)` < 1) error("Current influence list has not pinned influence.");
+
+    string $text = "";
+    string $result =    `promptDialog
+                        -title "Influence List Pin Cache"
+                        -message "Enter Cache Name:"
+                        -button "OK" -button "Cancel"
+                        -defaultButton "OK" -cancelButton "Cancel"
+                        -dismissString "Cancel"`;
+
+    if ($result == "OK") {
+        $text = `promptDialog -q -text`;
+    }else{
+        return;
+    }
+
+    if(`gmatch $text "*[!a-zA-Z0-9]*"`) error("\"" + $text + "\" has non alphanumeric.");
+
+    int $cacheIndex = stringArrayFind($text, 0, $rpq9DeformerWeightSetter_pinInfluenceCacheNames);
+    if ($cacheIndex<0){
+        $cacheIndex = `size($rpq9DeformerWeightSetter_pinInfluenceCacheNames)`;
+        $rpq9DeformerWeightSetter_pinInfluenceCacheNames[$cacheIndex] = $text;
+    }
+    string $globalVaraiableName = "rpq9DeformerWeightSetter_influenceNameListCachePin_" + $text;
+
+    string $cmd = "global string $" + $globalVaraiableName + "[]; $" + $globalVaraiableName + "={\"";
+    $cmd += stringArrayToString($rpq9DeformerWeightSetter_pinInfluenceNames, "\",\"");
+    $cmd += "\"};";
+
+    eval($cmd);
+    rpq9DeformerWeightSetter_refleshInfluenceNameListPinMenu();
+}
+
+
+global proc rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSCC(string $treeView)
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSelected[];
+    $rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSelected =  `treeView -q -selectItem $treeView`;
+}
+
+
+global proc rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogUI()
+{
+    global string $rpq9DeformerWeightSetter_pinInfluenceCacheNames[];
+    global string $rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSelected[];
+    $rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSelected = {};
+
+    string $form = `setParent -q`;
+
+    string $tree = `treeView -abr false -arp false -editLabelCommand ""`;
+    treeView -e -scc ("rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSCC " + $tree) $tree;
+    string $cacheName = "";
+    for($cacheName in $rpq9DeformerWeightSetter_pinInfluenceCacheNames){
+        treeView -e -ai $cacheName "" $tree;
+    }
+    string $applyButton = `button -l "Apply" -c "layoutDialog -dismiss \"Apply\""`;
+    string $cancelButton = `button -l "Cancel" -c "layoutDialog -dismiss \"Cancel\""`;
+
+    formLayout -e
+        -af $tree "top" 0
+        -af $tree "left" 0
+        -af $tree "right" 0
+        -ac $tree "bottom" 0 $applyButton
+
+        -an $applyButton "top"
+        -af $applyButton "left" 0
+        -ap $applyButton "right" 0 50
+        -af $applyButton "bottom" 0
+
+        -an $cancelButton "top"
+        -ap $cancelButton "left" 0 50
+        -af $cancelButton "right" 0
+        -af $cancelButton "bottom" 0
+
+        $form;
+}
+
+
+global proc rpq9DeformerWeightSetter_influenceNameListDeleteCachePin()
+{
+    global string $rpq9DeformerWeightSetter_pinInfluenceCacheNames[];
+    global string $rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSelected[];
+    string $deleteCacheNames = `layoutDialog  -t "Delete Pin Cache"-ui "rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogUI"`;
+    if($deleteCacheNames != "Apply") return;
+
+    string $item = "";
+    for($item in $rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSelected){
+        int $cacheIndex = stringArrayFind($item, 0, $rpq9DeformerWeightSetter_pinInfluenceCacheNames);
+
+        string $globalVaraiableName = "rpq9DeformerWeightSetter_influenceNameListCachePin_" + $item;
+        string $cmd = "global string $" + $globalVaraiableName + "[]; $" + $globalVaraiableName + "={};";
+        eval($cmd);
+
+        stringArrayRemoveAtIndex($cacheIndex, $rpq9DeformerWeightSetter_pinInfluenceCacheNames);
+    }
+    $rpq9DeformerWeightSetter_influenceNameListDeleteCachePinDialogTreeSelected = {};
+    rpq9DeformerWeightSetter_refleshInfluenceNameListPinMenu();
+}
+
+
+global proc rpq9DeformerWeightSetter_deformerOptionCC(string $current)
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    $rpq9DeformerWeightSetter_currentDeformerName = $current;
+    $rpq9DeformerWeightSetter_currentDeformerType = `nodeType $current`;
+    rpq9DeformerWeightSetter_updateInfluenceList();
+}
+
+
+global proc rpq9DeformerWeightSetter_influenceListCC()
+{
+    global string $rpq9DeformerWeightSetter_prevBorderHighliteItem;
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    global string $rpq9DeformerWeightSetter_influenceNameListSelNames[];
+    if($rpq9DeformerWeightSetter_prevBorderHighliteItem != "" && `treeView -q -iex $rpq9DeformerWeightSetter_prevBorderHighliteItem $rpq9DeformerWeightSetter_influenceNameListName`){
+        treeView -e -bh $rpq9DeformerWeightSetter_prevBorderHighliteItem false $rpq9DeformerWeightSetter_influenceNameListName;
+    }
+
+    $rpq9DeformerWeightSetter_influenceNameListSelNames = `treeView -q -si $rpq9DeformerWeightSetter_influenceNameListName`;
+    if (`size ($rpq9DeformerWeightSetter_influenceNameListSelNames)` >= 2 ){
+        $rpq9DeformerWeightSetter_prevBorderHighliteItem = $rpq9DeformerWeightSetter_influenceNameListSelNames[0];
+        treeView -e -bh $rpq9DeformerWeightSetter_influenceNameListSelNames[0] true $rpq9DeformerWeightSetter_influenceNameListName;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_setAllSKinLiwFromUI(int $value)
+{
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    string $influences[] = `treeView -q -children "" $rpq9DeformerWeightSetter_influenceNameListName`;
+    if (`size($influences)` == 0) return;
+
+    string $influence;
+    undoInfo -openChunk -chunkName "rpq9DeformerWeightSetter_setAllSKinLiw";
+    for($influence in $influences){
+        if (`attributeQuery -node $influence -exists "liw"`) {
+            setAttr ($influence + ".liw") $value;
+            rpq9DeformerWeightSetter_setListLockIcon($influence, $value);
+        }
+    }
+    undoInfo -closeChunk;
+}
+
+
+global proc rpq9DeformerWeightSetter_sliderDC(float $value)
+{
+    global string $rpq9DeformerWeightSetter_weightValueSliderName;
+    global int $rpq9DeformerWeightSetter_isSliderDragging;
+    if ($rpq9DeformerWeightSetter_isSliderDragging == 0){
+        undoInfo -openChunk -chunkName "rpq9DeformerWeightSetter_sliderDrag";
+        $rpq9DeformerWeightSetter_isSliderDragging = 1;
+    }
+    catch(rpq9DeformerWeightSetter_setWeightToSelected($value));
+}
+
+
+global proc rpq9DeformerWeightSetter_slideCC(float $value)
+{
+    global string $rpq9DeformerWeightSetter_weightValueSliderName;
+    global int $rpq9DeformerWeightSetter_isSliderDragging;
+
+    catch(rpq9DeformerWeightSetter_setWeightToSelected($value));
+
+    if ($rpq9DeformerWeightSetter_isSliderDragging == 1){
+        undoInfo -closeChunk;
+        $rpq9DeformerWeightSetter_isSliderDragging = 0;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_slideBC()
+{
+    global string $rpq9DeformerWeightSetter_weightValueSliderName;
+
+    float $value = `floatSliderButtonGrp -q -v $rpq9DeformerWeightSetter_weightValueSliderName`;
+    rpq9DeformerWeightSetter_setWeightToSelected($value);
+}
+
+
+global proc rpq9DeformerWeightSetter_copySelectedComponentWeightFromUI()
+{
+    undoInfo -openChunk -chunkName "rpq9DeformerWeightSetter_copyComponentWeight";
+    catch(rpq9DeformerWeightSetter_copySelectedComponentWeight());
+    undoInfo -closeChunk;
+}
+
+
+global proc rpq9DeformerWeightSetter_setSelectedComponentAverageWeightFromUI()
+{
+    undoInfo -openChunk -chunkName "rpq9DeformerWeightSetter_setAverageWeight";
+    catch(rpq9DeformerWeightSetter_setSelectedComponentAverageWeight());
+    undoInfo -closeChunk;
+}
+
+
+global proc rpq9DeformerWeightSetter_saveUiValues()
+{
+    global string $rpq9DeformerWeightSetter_setWeightModeRadioButtonName;
+    global string $rpq9DeformerWeightSetter_weightValueSliderName;
+    global string $rpq9DeformerWeightSetter_optionVarNames[];
+    optionVar -iv $rpq9DeformerWeightSetter_optionVarNames[0] `radioButtonGrp -q -sl $rpq9DeformerWeightSetter_setWeightModeRadioButtonName`;
+    optionVar -fv $rpq9DeformerWeightSetter_optionVarNames[1] `floatSliderButtonGrp -q -v $rpq9DeformerWeightSetter_weightValueSliderName`;
+}
+
+
+global proc rpq9DeformerWeightSetter_loadUiValues()
+{
+    global string $rpq9DeformerWeightSetter_setWeightModeRadioButtonName;
+    global string $rpq9DeformerWeightSetter_weightValueSliderName;
+    global string $rpq9DeformerWeightSetter_optionVarNames[];
+
+    if(`optionVar -exists $rpq9DeformerWeightSetter_optionVarNames[0]`){
+        radioButtonGrp -e -sl `optionVar -q $rpq9DeformerWeightSetter_optionVarNames[0]` $rpq9DeformerWeightSetter_setWeightModeRadioButtonName;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_optionVarNames[1]`){
+        floatSliderButtonGrp -e -v `optionVar -q $rpq9DeformerWeightSetter_optionVarNames[1]` $rpq9DeformerWeightSetter_weightValueSliderName;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_deleteSavedUiValues()
+{
+    global string $rpq9DeformerWeightSetter_optionVarNames[];
+    int $optionVarSize = `size($rpq9DeformerWeightSetter_optionVarNames)`;
+    int $i = 0;
+    for($i=0; $i<$optionVarSize; ++$i){
+        if(`optionVar -exists $rpq9DeformerWeightSetter_optionVarNames[$i]`){
+            optionVar -rm $rpq9DeformerWeightSetter_optionVarNames[$i];
+        }
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_mirrorWeightsExecute()
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    if ($rpq9DeformerWeightSetter_currentDeformerName == "") error "No selected deformer.";
+
+    if($rpq9DeformerWeightSetter_currentDeformerType == "skinCluster"){
+        MirrorSkinWeights;
+    }else{
+        MirrorDeformerWeights;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_mirrorWeightsOption()
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    if ($rpq9DeformerWeightSetter_currentDeformerName == "") error "No selected deformer.";
+
+    if($rpq9DeformerWeightSetter_currentDeformerType == "skinCluster"){
+        MirrorSkinWeightsOptions;
+    }else{
+        MirrorDeformerWeightsOptions;
+    }
+}
+
+
+//--- rpq9MirrorSkinWeights
+global proc clampFloatFieldGrpUnsigned(string $field)
+{
+    float $v = `floatFieldGrp -q -value1 $field`;
+    float $floatMax = 3.402823466e+38;
+    if ($v < 0.0)
+        $v = 0.0;
+    else if ($v > $floatMax)
+        $v = $floatMax;
+
+    floatFieldGrp -e -value1 $v $field;
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_saveUiValues()
+{
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_mirrorSourceMenuName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_sourceNamingConventionFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_targetNamingConventionFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_thresholdSliderName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[];
+    optionVar -iv $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[0] `optionMenuGrp -q -sl $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_mirrorSourceMenuName`;
+    optionVar -sv $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[1] `textFieldGrp -q -tx $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_sourceNamingConventionFieldName`;
+    optionVar -sv $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[2] `textFieldGrp -q -tx $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_targetNamingConventionFieldName`;
+    optionVar -fv $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[3] `floatSliderGrp -q -v $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_thresholdSliderName`;
+    
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_loadUiValues()
+{
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_mirrorSourceMenuName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_sourceNamingConventionFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_targetNamingConventionFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_thresholdSliderName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[];
+
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[0]`){
+        optionMenuGrp -e -sl `optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[0]` $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_mirrorSourceMenuName;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[1]`){
+        textFieldGrp -e -tx `optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[1]` $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_sourceNamingConventionFieldName;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[2]`){
+        textFieldGrp -e -tx `optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[2]` $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_targetNamingConventionFieldName;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[3]`){
+        floatSliderGrp -e -v `optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[3]` $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_thresholdSliderName;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_deleteSavedUiValues()
+{
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[];
+    int $optionVarSize = `size($rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames)`;
+    int $i = 0;
+    for($i=0; $i<$optionVarSize; ++$i){
+        if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[$i]`){
+            optionVar -rm $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[$i];
+        }
+    }
+}
+
+
+global proc string rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_getFlagsFromOptionVar()
+{
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[];
+    string $cmd = "";
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[0]`){
+        $cmd += " -mirrorSource " + (`optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[0]` - 1);
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[1]` && `optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[2]`){
+        string $sourceText = `optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[1]`;
+        string $targetText = `optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[2]`;
+        if($sourceText != "" && $targetText != ""){
+            $cmd += " -namingConvention \"" + $sourceText + "\" \"" + $targetText + "\"";
+        }
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[3]`){
+        $cmd += " -threshold " + `optionVar -q $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[3]`;
+    }
+    return $cmd;
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9MirrorSkinWeights()
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    if ($rpq9DeformerWeightSetter_currentDeformerName == "") error "No selected deformer.";
+    if($rpq9DeformerWeightSetter_currentDeformerType != "skinCluster") error "current deformer is not skinCluster.";
+
+    string $cmd = "rpq9MirrorSkinWeights";
+    $cmd += rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_getFlagsFromOptionVar();
+    $cmd += " -skinCluster \"" + $rpq9DeformerWeightSetter_currentDeformerName + "\"";
+
+    evalEcho($cmd);
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9MirrorSkinWeightsOptions()
+{
+    string $windowName = "rpq9MirrorSkinWeightsOptions";
+    //--- variable declaration
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_mirrorSourceMenuName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_sourceNamingConventionFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_targetNamingConventionFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_thresholdSliderName;
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[];
+
+    if((`window -ex $windowName`)==true)deleteUI $windowName ;
+    string $window = `window -t $windowName -mb true $windowName` ;
+    menu -l "Edit" ;
+    menuItem -l "Save Settings" -c "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_saveUiValues" ;
+    menuItem -l "Reset Settings" -c "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_deleteSavedUiValues();rpq9DeformerWeightSetter_rpq9MirrorSkinWeightsOptions();" ;
+    string $form = `formLayout`;
+    string $column = `columnLayout -adj true`;
+    separator -h 10 -st "none";
+    $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_mirrorSourceMenuName = `optionMenuGrp -label "mirrorSource: " -cc "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_saveUiValues();"`;
+    menuItem -label "x";
+    menuItem -label "y";
+    menuItem -label "z";
+    menuItem -label "-x";
+    menuItem -label "-y";
+    menuItem -label "-z";
+    separator -h 10 -st "none";
+
+    $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_sourceNamingConventionFieldName = `textFieldGrp -label "sourceNamingConvention: " -cc "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_saveUiValues()"`;
+    $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_targetNamingConventionFieldName = `textFieldGrp -label "targetNamingConvention: " -cc "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_saveUiValues()"`;
+    
+    $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_thresholdSliderName = `floatSliderGrp -l "threshold: " -f true -min 0.0 -max 1.0 -pre 4 -v 0.001
+    -cc "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_saveUiValues();"`;
+    separator -h 10 -st "none";
+    setParent ..;
+
+    string $button = `button -l "Apply" -h 40 -c "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights()"`;
+    formLayout -e
+        -af $column "top" 0
+        -af $column "left" 0
+        -af $column "right" 0
+        -ac $column "bottom" 0 $button
+
+        -an $button "top"
+        -af $button "left" 0
+        -af $button "right" 0
+        -af $button "bottom" 0
+        $form;
+    setParent ..;
+    showWindow $window;
+
+    rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_loadUiValues();
+}
+
+
+//--- rpq9CopyBackVertexSkinWeights
+global proc rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_saveUiValues()
+{
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_thresholdSliderName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_findBackVertexMethodMenuName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[];
+    optionVar -fv $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[0] `floatFieldGrp -q -v1 $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName`;
+    optionVar -fv $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[1] `floatSliderGrp -q -v $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_thresholdSliderName`;
+    optionVar -iv $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[2] `optionMenuGrp -q -sl $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_findBackVertexMethodMenuName`;
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_loadUiValues()
+{
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_thresholdSliderName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_findBackVertexMethodMenuName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[];
+
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[0]`){
+        floatFieldGrp -e -v1 `optionVar -q $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[0]` $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[1]`){
+        floatSliderGrp -e -v `optionVar -q $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[1]` $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_thresholdSliderName;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[2]`){
+        optionMenuGrp -e -sl `optionVar -q $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[2]` $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_findBackVertexMethodMenuName;
+    }
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_deleteSavedUiValues()
+{
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[];
+    int $optionVarSize = `size($rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames)`;
+    int $i = 0;
+    for($i=0; $i<$optionVarSize; ++$i){
+        if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[$i]`){
+            optionVar -rm $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[$i];
+        }
+    }
+}
+
+
+global proc string rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_getFlagsFromOptionVar()
+{
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[];
+    string $cmd = "";
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[0]`){
+        $cmd += " -maxParam " + `optionVar -q $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[0]`;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[1]`){
+        $cmd += " -threshold " + `optionVar -q $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[1]`;
+    }
+    if(`optionVar -exists $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[2]`){
+        $cmd += " -findBackVertexMethod " + (`optionVar -q $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[2]` - 1);
+    }
+    return $cmd;
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights()
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    if ($rpq9DeformerWeightSetter_currentDeformerName == "") error "No selected deformer.";
+    string $cmd = "";
+    if($rpq9DeformerWeightSetter_currentDeformerType == "skinCluster"){
+        $cmd += "rpq9CopyBackVertexSkinWeights";
+        $cmd += rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_getFlagsFromOptionVar();
+        $cmd += " -skinCluster \"" + $rpq9DeformerWeightSetter_currentDeformerName + "\"";
+    }else{
+        $cmd += "rpq9CopyBackVertexDeformerWeights";
+        $cmd += rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_getFlagsFromOptionVar();
+        $cmd += " -deformer \"" + $rpq9DeformerWeightSetter_currentDeformerName + "\"";
+    }
+    evalEcho($cmd);
+}
+
+
+global proc rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeightsOptions()
+{
+    string $windowName = "rpq9CopyBackVertexSkinWeightsOptions";
+    //--- variable declaration
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_thresholdSliderName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_findBackVertexMethodMenuName;
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[];
+
+    if((`window -ex $windowName`)==true)deleteUI $windowName ;
+    string $window = `window -t $windowName -mb true $windowName`;
+    menu -l "Edit" ;
+    menuItem -l "Save Settings" -c "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_saveUiValues" ;
+    menuItem -l "Reset Settings" -c "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_deleteSavedUiValues();rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeightsOptions();" ;
+    string $form = `formLayout`;
+    string $column = `columnLayout -adj true`;
+    separator -h 10 -st "none";
+    float $floatMax = 3.402823466e+38;
+    $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName = `floatFieldGrp -numberOfFields 1 -label "maxParam: " -value1 $floatMax`;
+    floatFieldGrp -e -cc ("clampFloatFieldGrpUnsigned(\"" + $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName + "\"); rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_saveUiValues();") $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldName;
+
+    $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_thresholdSliderName = `floatSliderGrp -l "threshold: " -f true -min 0.0 -max 1.0 -pre 4 -v 0.001
+    -cc "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_saveUiValues();"`;
+
+    $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_findBackVertexMethodMenuName = `optionMenuGrp -label "findBackVertexMethod: " -cc "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_saveUiValues();"`;
+    menuItem -label "Scoring";
+    menuItem -label "Raycast";
+    separator -h 10 -st "none";
+    setParent ..;
+
+    string $button = `button -l "Apply" -h 40 -c "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights()"`;
+    formLayout -e
+        -af $column "top" 0
+        -af $column "left" 0
+        -af $column "right" 0
+        -ac $column "bottom" 0 $button
+
+        -an $button "top"
+        -af $button "left" 0
+        -af $button "right" 0
+        -af $button "bottom" 0
+        $form;
+    setParent ..;
+    showWindow $window;
+
+    rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_loadUiValues();
+}
+
+
+//--- scriptJob
+global proc rpq9DeformerWeightSetter_selChangeSJ()
+{
+    global string $rpq9DeformerWeightSetter_prevSelected;
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    string $deformerNames[] = rpq9DeformerWeightSetter_getSelDeformers();
+
+    string $sel[] = `ls -sl`;
+    if (size($sel) != 0){
+        string $buffer[];
+        tokenize $sel[0] "." $buffer;
+
+        if($buffer[0] == $rpq9DeformerWeightSetter_prevSelected){
+            return;
+        }
+        $rpq9DeformerWeightSetter_prevSelected = $buffer[0];
+    }else{
+        $rpq9DeformerWeightSetter_prevSelected = "";
+    }
+
+    rpq9DeformerWeightSetter_updateUi();
+}
+
+
+//--- reset global variables
+proc rpq9DeformerWeightSetter_resetGlobalVariables()
+{
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    global int $rpq9DeformerWeightSetter_isSliderDragging;
+    global string $rpq9DeformerWeightSetter_prevSelected;
+    global string $rpq9DeformerWeightSetter_optionVarNames[];
+    global string $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames[];
+    global string $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames[];
+
+    $rpq9DeformerWeightSetter_currentDeformerName = "";
+    $rpq9DeformerWeightSetter_currentDeformerType = "";
+    $rpq9DeformerWeightSetter_isSliderDragging = 0;
+    $rpq9DeformerWeightSetter_prevSelected = "";
+    $rpq9DeformerWeightSetter_optionVarNames = {"rpq9DeformerWeightSetter_setWeightModeRadioButtonValue", "rpq9DeformerWeightSetter_weightValueSliderValue"};
+    $rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_optionVarNames = {
+        "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_mirrorSourceMenuValue",
+        "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_sourceNamingConventionFieldText",
+        "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_targetNamingConventionFieldText",
+        "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights_thresholdSliderValue"
+    };
+    $rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_optionVarNames = {
+        "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_maxParamFieldValue",
+        "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_thresholdSliderValue",
+        "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights_findBackVertexMethodMenuValue"};
+}
+
+
+//--- main ui
+global proc rpq9DeformerWeightSetter()
+{
+    string $windowName = "rpq9DeformerWeightSetter";
+    //--- variable declaration
+    global string $rpq9DeformerWeightSetter_deformerOptionName;
+    global string $rpq9DeformerWeightSetter_influenceNameListFillterName;
+    global string $rpq9DeformerWeightSetter_pinInfluenceNames[];
+    global string $rpq9DeformerWeightSetter_pinInfluenceCacheNames[];
+    global string $rpq9DeformerWeightSetter_influenceNameListName;
+    global string $rpq9DeformerWeightSetter_influenceNameListSelNames[];
+    global string $rpq9DeformerWeightSetter_influenceNameListPinName;
+    global string $rpq9DeformerWeightSetter_influenceNameListPinMenuName;
+    global int $rpq9DeformerWeightSetter_isInfluenceNameListPin;
+
+    global string $rpq9DeformerWeightSetter_setWeightModeRadioButtonName;
+    global string $rpq9DeformerWeightSetter_weightValueSliderName;
+
+    global string $rpq9DeformerWeightSetter_currentDeformerName;
+    global string $rpq9DeformerWeightSetter_currentDeformerType;
+    global int $rpq9DeformerWeightSetter_isSliderDragging;
+    global string $rpq9DeformerWeightSetter_prevSelected;
+
+    global string $rpq9DeformerWeightSetter_optionVarNames[];
+
+    rpq9DeformerWeightSetter_resetGlobalVariables();
+
+    if((`window -ex $windowName`)==true)deleteUI $windowName ;
+    string $window = `window -t $windowName -mb true $windowName` ;
+    string $masterPane = `paneLayout -configuration "horizontal2"`;
+    string $mainForm = `formLayout`;
+    string $column1 = `columnLayout -adj true`;
+    separator -h 10 -st "none";
+    string $optionMenuForm = `formLayout`;
+    $rpq9DeformerWeightSetter_deformerOptionName = `optionMenu -l "deformer: " -acc -cc "rpq9DeformerWeightSetter_deformerOptionCC(\"#1\")"`;
+    formLayout -e   -af $rpq9DeformerWeightSetter_deformerOptionName "top" 0
+                    -ap $rpq9DeformerWeightSetter_deformerOptionName "left" 0 20
+                    -ap $rpq9DeformerWeightSetter_deformerOptionName "right" 0 80
+                    -af $rpq9DeformerWeightSetter_deformerOptionName "bottom" 0
+                    $optionMenuForm;
+    setParent ..;// $optionMenuForm
+    separator -h 10 -st "single" -hr true;
+    frameLayout -l "Influences" -cll false;
+    setParent ..;// frameLayout with "Inlfluences" label
+    string $fillterRootLayout = `rowLayout -nc 2 -ad2 1`;
+    setParent ..;// $fillterRootLayout
+    setParent ..;// $column1
+
+    $rpq9DeformerWeightSetter_influenceNameListName = `treeView -numberOfButtons 1 -abr false -arp false -scc rpq9DeformerWeightSetter_influenceListCC`;
+    treeView -e -enableKeys true $rpq9DeformerWeightSetter_influenceNameListName;
+    treeView -e -pressCommand 1 rpq9DeformerWeightSetter_influenceNameListLockCB $rpq9DeformerWeightSetter_influenceNameListName;
+
+    string $fillterUiRoot = filterUICreateField($rpq9DeformerWeightSetter_influenceNameListName, $fillterRootLayout);
+
+    string $fillterUiRootFullPath = `layout -q -fpn $fillterUiRoot`;
+    string $fillterComponents[] = `layout -q -childArray $fillterUiRoot`;
+    string $fillterTextFiled, $component;
+    for ($component in $fillterComponents){
+        if (`gmatch $component "textField*"`) {
+            $fillterTextFiled = $component;
+            break;
+        }
+    }
+    $rpq9DeformerWeightSetter_influenceNameListFillterName = $fillterUiRootFullPath + "|" + $fillterTextFiled;
+
+    $rpq9DeformerWeightSetter_influenceNameListPinName = `iconTextCheckBox -image "unpinned.png"  -w 20 -h 20`;
+
+    iconTextCheckBox -e 
+                    -onc ("rpq9DeformerWeightSetter_influenceNameListPinCallback "+$rpq9DeformerWeightSetter_influenceNameListPinName+" "+$rpq9DeformerWeightSetter_influenceNameListName+ " " + $rpq9DeformerWeightSetter_influenceNameListFillterName + " true")
+                    -ofc ("rpq9DeformerWeightSetter_influenceNameListPinCallback "+$rpq9DeformerWeightSetter_influenceNameListPinName+" "+$rpq9DeformerWeightSetter_influenceNameListName+ " " + $rpq9DeformerWeightSetter_influenceNameListFillterName + " false")
+                    $rpq9DeformerWeightSetter_influenceNameListPinName;
+    $rpq9DeformerWeightSetter_influenceNameListPinMenuName = `popupMenu -p $rpq9DeformerWeightSetter_influenceNameListPinName`;
+    rpq9DeformerWeightSetter_refleshInfluenceNameListPinMenu();
+    setParent $mainForm;
+
+    string $column2 = `columnLayout -adj true`;
+    separator -h 10 -st "none";
+    rowLayout -nc 5 -co5 5 5 5 5 5;
+    //shelfLayout;
+    int $buttonSize = 50;
+    iconTextButton -h $buttonSize -w $buttonSize -st "iconAndTextVertical" -l "All" -i "Lock_ON.png" -c "rpq9DeformerWeightSetter_setAllSKinLiwFromUI(1)";
+    iconTextButton -h $buttonSize -w $buttonSize -st "iconAndTextVertical" -l "All" -i "Lock_OFF_grey.png" -c "rpq9DeformerWeightSetter_setAllSKinLiwFromUI(0)";
+    iconTextButton -h $buttonSize -w $buttonSize -st "iconAndTextVertical" -l "ByPoint" -i "copySkinWeight.png" -c "rpq9DeformerWeightSetter_copySelectedComponentWeightFromUI()";
+    iconTextButton -h $buttonSize -w $buttonSize -st "iconAndTextVertical" -l "avg" -i "copySkinWeight.png" -c "rpq9DeformerWeightSetter_setSelectedComponentAverageWeightFromUI()";
+
+    rowLayout -nc 2 -co2 5 5;
+    iconTextButton -h $buttonSize -w $buttonSize -st "iconOnly" -i "copySkinWeight.png" -c "CopySkinWeights" -dcc "CopySkinWeightsOptions";
+    iconTextButton -h $buttonSize -w $buttonSize -st "iconOnly" -i "mirrorSkinWeight.png" -c "rpq9DeformerWeightSetter_mirrorWeightsExecute()" -dcc "rpq9DeformerWeightSetter_mirrorWeightsOption()";
+
+    setParent ..;// rowLayout
+    setParent ..;// rowLayout
+
+    if(!catchQuiet(`loadPlugin -qt "rpq9SkinningCommands"`)){
+        rowLayout -nc 2 -co2 5 5;
+        iconTextButton -h $buttonSize -w $buttonSize -st "iconAndTextVertical" -l "rpq9" -i "mirrorSkinWeight.png" -c "rpq9DeformerWeightSetter_rpq9MirrorSkinWeights()" -dcc "rpq9DeformerWeightSetter_rpq9MirrorSkinWeightsOptions";
+        iconTextButton -h $buttonSize -w $buttonSize -st "iconAndTextVertical" -l "backVtx" -i "copySkinWeight.png" -c "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeights()" -dcc "rpq9DeformerWeightSetter_rpq9CopyBackVertexSkinWeightsOptions";
+        setParent ..;
+    }
+
+    separator -h 10 -st "single" -hr true;
+    $rpq9DeformerWeightSetter_setWeightModeRadioButtonName = `radioButtonGrp -l "set weight mode: " -nrb 2 -sl 0 -la2 "absolute" "relative" -cc "rpq9DeformerWeightSetter_saveUiValues()"`;
+    separator -h 10 -st "none";
+    $rpq9DeformerWeightSetter_weightValueSliderName = `floatSliderButtonGrp -l "weights value: " -f true -min 0.0 -max 1.0 -pre 3 -bl "set weight"
+     -dc "rpq9DeformerWeightSetter_sliderDC(\"#1\")" -cc "rpq9DeformerWeightSetter_slideCC(\"#1\"); rpq9DeformerWeightSetter_saveUiValues();" -bc rpq9DeformerWeightSetter_slideBC`;
+    separator -h 10 -st "none";
+    text -l "weight value buttons";
+    separator -h 5 -st "single" -hr true;
+    setParent ..;// $column2
+
+    formLayout -e   -af $column1 "top" 0
+                    -af $column1 "left" 0
+                    -af $column1 "right" 0
+                    -an $column1 "bottom"
+
+                    -ac $rpq9DeformerWeightSetter_influenceNameListName "top" 0 $column1
+                    -af $rpq9DeformerWeightSetter_influenceNameListName "left" 0
+                    -af $rpq9DeformerWeightSetter_influenceNameListName "right" 0
+                    -ac $rpq9DeformerWeightSetter_influenceNameListName "bottom" 0 $column2
+
+                    -an $column2 "top"
+                    -af $column2 "left" 0
+                    -af $column2 "right" 0
+                    -af $column2 "bottom" 0
+                    $mainForm;
+    setParent ..;// $mainForm
+
+    string $buttonForm = `formLayout`;
+    string $button1 = rpq9DeformerWeightSetter_createSetWeightButtons({0.0, 0.5, 0.05, 0.55, 0.001});
+    string $button2 = rpq9DeformerWeightSetter_createSetWeightButtons({0.1, 0.6, 0.15, 0.65, 0.002});
+    string $button3 = rpq9DeformerWeightSetter_createSetWeightButtons({0.2, 0.7, 0.25, 0.75, 0.01});
+    string $button4 = rpq9DeformerWeightSetter_createSetWeightButtons({0.3, 0.8, 0.35, 0.85, 0.02});
+    string $button5 = rpq9DeformerWeightSetter_createSetWeightButtons({0.4, 0.9, 0.45, 0.95, 1.0});
+
+    formLayout  -e
+                -af $button1 "top" 0
+                -af $button1 "left" 0
+                -ap $button1 "right" 0 20
+                -af $button1 "bottom" 0
+                
+                -af $button2 "top" 0
+                -ap $button2 "left" 0 20
+                -ap $button2 "right" 0 40
+                -af $button2 "bottom" 0
+                
+                -af $button3 "top" 0
+                -ap $button3 "left" 0 40
+                -ap $button3 "right" 0 60
+                -af $button3 "bottom" 0
+                
+                -af $button4 "top" 0
+                -ap $button4 "left" 0 60
+                -ap $button4 "right" 0 80
+                -af $button4 "bottom" 0
+                
+                -af $button5 "top" 0
+                -ap $button5 "left" 0 80
+                -af $button5 "right" 0
+                -af $button5 "bottom" 0
+                $buttonForm;
+    setParent ..;// $buttonForm
+    setParent ..;// $masterPane
+    showWindow $window ;
+
+    //--- post process
+    iconTextCheckBox -e -v $rpq9DeformerWeightSetter_isInfluenceNameListPin $rpq9DeformerWeightSetter_influenceNameListPinName;
+    rpq9DeformerWeightSetter_refleshInfluenceNameList($rpq9DeformerWeightSetter_influenceNameListPinName, $rpq9DeformerWeightSetter_influenceNameListName, $rpq9DeformerWeightSetter_influenceNameListFillterName, $rpq9DeformerWeightSetter_isInfluenceNameListPin);
+    rpq9DeformerWeightSetter_loadUiValues();
+    
+    rpq9DeformerWeightSetter_selChangeSJ();
+    scriptJob -event "SelectionChanged" "rpq9DeformerWeightSetter_selChangeSJ()" -per -p $window;
+}

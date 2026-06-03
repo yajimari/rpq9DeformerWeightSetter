@@ -1120,7 +1120,7 @@ global proc rpq9DeformerWeightSetter()
     setParent ..;// $fillterRootLayout
     setParent ..;// $column1
 
-    $rpq9DeformerWeightSetter_influenceNameListName = `treeView -numberOfButtons 1 -abr false -arp false -scc rpq9DeformerWeightSetter_influenceListCC`;
+    $rpq9DeformerWeightSetter_influenceNameListName = `treeView -numberOfButtons 1 -abr false -arp false -editLabelCommand "" -scc rpq9DeformerWeightSetter_influenceListCC`;
     treeView -e -enableKeys true $rpq9DeformerWeightSetter_influenceNameListName;
     treeView -e -pressCommand 1 rpq9DeformerWeightSetter_influenceNameListLockCB $rpq9DeformerWeightSetter_influenceNameListName;
 
